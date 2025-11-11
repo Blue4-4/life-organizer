@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""
+Daily Journal Creator for Google Drive
+Creates a new Google Doc with today's date in specified folder
+"""
+
+import os
+from datetime import datetime
+from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
+# Google Drive API scopes
+SCOPES = ['https://www.googleapis.com/auth/drive.file', 
+          'https://www.googleapis.com/auth/documents']
+
+# Configuration
+JOURNAL_FOLDER_ID = "1iEVnYyRCJ3qmMFBwE_Dkht8TitFqSezS"  # Your journal entries folder
+MASTER_DOC_LINK = "https://docs.google.com/document/d/1zHL1gIa_MwaJPGk_GL0LSq3Q1MjbP-wDkHh5lJ03R-o/edit?tab=t.0"
+
+def get_credentials():
+    """Get Google API credentials - prompts for authentication every time"""
+    # Always prompt for fresh authentication
+    flow = InstalledAppFlow.from_client_secrets_file(
+        'credentials.json', SCOPES)
+    creds = flow.run_local_server(port=0)
+    
+    return creds
+
+def get_today_filename():
+    """Generate filename in format 'Sun - yymmdd'"""
+    today = datetime.now()
+    day_name = today.strftime('%a')  # Gets abbreviated day name (Sun, Mon, etc.)
+    date_format = today.strftime('%y%m%d')  # Gets yymmdd format
+    return f"{day_name} - {date_format}"
+
+def check_document_exists(drive_service, folder_id, filename):
+    """Check if document with filename already exists in folder"""
+    try:
+        query = f"name='{filename}' and parents in '{folder_id}' and mimeType='application/vnd.google-apps.document'"
+        results = drive_service.files().list(q=query).execute()
+        items = results.get('files', [])
+        return len(items) > 0, items[0]['id'] if items else None
+    except HttpError as error:
+        print(f'An error occurred checking for existing document: {error}')
+        return False, None
+
+def create_google_doc(drive_service, docs_service, filename, folder_id):
+    """Create a new Google Doc in the specified folder"""
+    try:
+        # Create the document
+        doc_metadata = {
+            'name': filename,
+            'parents': [folder_id],
+            'mimeType': 'application/vnd.google-apps.document'
+        }
+        
+        doc = drive_service.files().create(body=doc_metadata).execute()
+        doc_id = doc.get('id')
+        
+        # Add content to the document
+        document_body = {
+            'requests': [
+                {
+                    'insertText': {
+                        'location': {'index': 1},
+                        'text': f"""Master Reference: {MASTER_DOC_LINK}
+
+Previous entry: 
+
+Work Organization: 
+
+[Today's edited notes go here]
+
+"""
+                    }
+                }
+            ]
+        }
+        
+        # Update the document with the content
+        docs_service.documents().batchUpdate(
+            documentId=doc_id, 
+            body=document_body
+        ).execute()
+        
+        return doc_id, f"https://docs.google.com/document/d/{doc_id}/edit"
+        
+    except HttpError as error:
+        print(f'An error occurred creating the document: {error}')
+        return None, None
+
+def main():
+    """Main function to create daily journal entry"""
+    print("🚀 Starting Daily Journal Creator...")
+    print("🔐 You will be prompted to authenticate with Google...")
+    
+    # Get credentials and build services
+    try:
+        creds = get_credentials()
+        drive_service = build('drive', 'v3', credentials=creds)
+        docs_service = build('docs', 'v1', credentials=creds)
+        print("✅ Successfully authenticated with Google APIs")
+    except Exception as e:
+        print(f"❌ Failed to authenticate: {e}")
+        return
+    
+    # Generate today's filename
+    filename = get_today_filename()
+    print(f"📅 Today's journal filename: {filename}")
+    
+    # Check if document already exists
+    exists, existing_doc_id = check_document_exists(drive_service, JOURNAL_FOLDER_ID, filename)
+    
+    if exists:
+        existing_url = f"https://docs.google.com/document/d/{existing_doc_id}/edit"
+        print(f"📝 Document already exists!")
+        print(f"🔗 URL: {existing_url}")
+        return
+    
+    # Create new document
+    print("📄 Creating new journal document...")
+    doc_id, doc_url = create_google_doc(drive_service, docs_service, filename, JOURNAL_FOLDER_ID)
+    
+    if doc_id:
+        print(f"✅ Successfully created journal entry!")
+        print(f"📄 Document ID: {doc_id}")
+        print(f"🔗 URL: {doc_url}")
+        print(f"📂 Location: Journal Entries Folder")
+        
+        # Optional: Open the document in browser
+        import webbrowser
+        user_input = input("\n🌐 Open document in browser? (y/n): ").lower()
+        if user_input == 'y':
+            webbrowser.open(doc_url)
+    else:
+        print("❌ Failed to create document")
+
+if __name__ == "__main__":
+    main()
